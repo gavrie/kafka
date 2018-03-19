@@ -22,8 +22,10 @@ import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.consumer.OffsetAndMetadata;
 import org.apache.kafka.clients.producer.Producer;
 import org.apache.kafka.common.KafkaException;
+import org.apache.kafka.common.PartitionInfo;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.errors.ProducerFencedException;
+import org.apache.kafka.common.internals.Topic;
 import org.apache.kafka.common.metrics.Sensor;
 import org.apache.kafka.common.utils.LogContext;
 import org.apache.kafka.common.utils.Time;
@@ -340,8 +342,22 @@ public class StreamTask extends AbstractTask implements ProcessorNodePunctuator 
         try {
             if (commitOffsetNeeded) {
                 log.trace("Committing offsets");
+
+                // TODO: Fetch committed offsets for all partitions.
+                // Then use this to refresh the committed offsets so it won't expire.
+                // Override it (below) with the consumedOffsets for active partitions.
+                String topic = ...
+                for (PartitionInfo info : consumer.partitionsFor(topic)) {
+                    TopicPartition tp = new TopicPartition(info.topic(), info.partition());
+                    OffsetAndMetadata om = consumer.committed(tp);
+                    om.offset()
+                }
+
                 final Map<TopicPartition, OffsetAndMetadata> consumedOffsetsAndMetadata = new HashMap<>(consumedOffsets.size());
+
                 for (final Map.Entry<TopicPartition, Long> entry : consumedOffsets.entrySet()) {
+                    // Accumulate list of topics that we encounter
+                    //...
                     final TopicPartition partition = entry.getKey();
                     final long offset = entry.getValue() + 1;
                     consumedOffsetsAndMetadata.put(partition, new OffsetAndMetadata(offset));
@@ -357,7 +373,14 @@ public class StreamTask extends AbstractTask implements ProcessorNodePunctuator 
                         producer.beginTransaction();
                     }
                 } else {
-                    consumer.commitSync(consumedOffsetsAndMetadata);
+                    if (false) { // TODO: Depend on streams config setting.
+                        consumer.commitSync(consumedOffsetsAndMetadata);
+                    } else {
+                        consumer.commitSync(); // Address KAFKA-5510. Required until KAFKA-4682 is fixed.
+                        // Is this good enough, or do we need to provide a specific map of consumer offsets?
+                        // If so, we should fill in that map with the offsets for inactive partitions.
+                        // Check where we call poll(), and take the data from there?
+                    }
                 }
                 commitOffsetNeeded = false;
             } else if (eosEnabled && !startNewTransaction && transactionInFlight) { // need to make sure to commit txn for suspend case
